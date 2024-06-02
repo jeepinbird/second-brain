@@ -42,26 +42,22 @@ def get_context(query_string):
 if __name__ == "__main__":
     import sys
     
+    # Get the prompt from CLI
     query = sys.argv[1]
 
-    streamed_response = True
-    if run_type := sys.argv[2]:
-        if run_type == 'no_stream':
-            streamed_response = False
-
+    # Fetch the related context from the database
     context = get_context(query)
 
+    # Build a prompt
     modelquery = f"Using the following text from my personal journal as a resource\n```\n{context}\n```\n\nAnswer the question: {query}"
 
-    response = ollama.generate(model='llama3', prompt=modelquery, stream=streamed_response)
+    # Generate a response from the model
+    response = ollama.generate(model='llama3', prompt=modelquery, stream=True)
 
-    if streamed_response:
-        for chunk in response:
-            if chunk["response"]:
-                print(chunk['response'], end='', flush=True)
-    else:
-        print(f"Evaluated {response['prompt_eval_count']} tokens and generated the full response in {response['total_duration'] / 1000000000} seconds.")
-        print(response["response"])
-
-    # End with a new line
-    print()
+    # Loop through the streaming response and print out the results
+    for chunk in response:
+        if chunk["response"]:
+            print(chunk['response'], end='', flush=True)
+    
+    # Lastly, print out stats for nerds
+    print(f"\n\nEvaluated {response['prompt_eval_count']} tokens and generated the full response in {response['total_duration'] / 1000000000} seconds.")
