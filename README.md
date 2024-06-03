@@ -1,6 +1,6 @@
 # Second Brain
 
-This project is using AI to read through my daily markdown journal entries, created via [Obsidian](https://obsidian.md/), to answer personal questions. 
+This project is using local AI ([Ollama](https://ollama.ai/)) to read through my daily markdown journal entries, created via [Obsidian](https://obsidian.md/), to answer personal questions. The goal is to essentially enable the use of my journal as a source of long term memory, having the LLM (currently `llama3`) to analyze my questions and give me a "human" answer.
 
 Example Questions:
 - "When did we buy tires for the Passport?"
@@ -59,11 +59,7 @@ CREATE TABLE journal.events (
     entry_id INTEGER NOT NULL REFERENCES journal.entries(id),
     content TEXT NOT NULL,
     embedding VECTOR(768),
-    search TSVECTOR
-	    GENERATED ALWAYS AS (
-		    setweight(to_tsvector('english', content), 'A') || ' ' ||
-		    setweight(to_tsvector('simple', content), 'B') :: tsvector
-	    ) STORED
+    search TSVECTOR GENERATED ALWAYS AS to_tsvector('english', content) :: tsvector) STORED
 );
 
 DROP FUNCTION IF EXISTS journal.search_entries;
