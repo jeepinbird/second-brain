@@ -9,7 +9,6 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
 # init models
-@st.cache_data
 def get_available_models():
     models = [model["name"] for model in ollama.list()["models"]]
     models.remove('nomic-embed-text:latest')
