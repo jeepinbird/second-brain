@@ -58,6 +58,4 @@ if __name__ == "__main__":
     for chunk in response:
         if chunk["response"]:
             print(chunk['response'], end='', flush=True)
-    
-    # Lastly, print out stats for nerds
-    print(f"\n\nEvaluated {response['prompt_eval_count']} tokens and generated the full response in {response['total_duration'] / 1000000000} seconds.")
+    print()
