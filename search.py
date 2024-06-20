@@ -40,12 +40,19 @@ def get_context(query_string):
 if __name__ == "__main__":
     import sys
     
-    query = sys.argv[1]
+    try:
+        query = sys.argv[1]
+    except IndexError:
+        print(f'\n  Usage: search.py "Why is the sky blue?"\n')
+        quit()
 
     streamed_response = True
-    if run_type := sys.argv[2]:
-        if run_type == 'no_stream':
-            streamed_response = False
+    try:
+        if run_type := sys.argv[2]:
+            if run_type == 'no_stream':
+                streamed_response = False
+    except IndexError:
+        pass
 
     context = get_context(query)
 
