@@ -34,7 +34,7 @@ def get_context(query_string):
     except psycopg.OperationalError as e:
         print("Unable to connect to the database: {}".format(e))
     
-    context = "\n\n".join([f"{date}: {blurb} - {content}" for date, blurb, content in results])
+    context = "\n\n".join([f"{date}: {blurb}{content}" for date, blurb, content in results])
     return context
 
 if __name__ == "__main__":
@@ -55,18 +55,16 @@ if __name__ == "__main__":
         pass
 
     context = get_context(query)
+    print(context)
 
+    # Build a prompt
     modelquery = f"Using the following text from my personal journal as a resource\n```\n{context}\n```\n\nAnswer the question: {query}"
 
-    response = ollama.generate(model='llama3', prompt=modelquery, stream=streamed_response)
+    # Generate a response from the model
+    response = ollama.generate(model='llama3', prompt=modelquery, stream=True)
 
-    if streamed_response:
-        for chunk in response:
-            if chunk["response"]:
-                print(chunk['response'], end='', flush=True)
-    else:
-        print(f"Evaluated {response['prompt_eval_count']} tokens and generated the full response in {response['total_duration'] / 1000000000} seconds.")
-        print(response["response"])
-
-    # End with a new line
+    # # Loop through the streaming response and print out the results
+    for chunk in response:
+        if chunk["response"]:
+            print(chunk['response'], end='', flush=True)
     print()

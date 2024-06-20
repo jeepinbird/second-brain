@@ -9,7 +9,6 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
 # init models
-@st.cache_data
 def get_available_models():
     models = [model["name"] for model in ollama.list()["models"]]
     models.remove('nomic-embed-text:latest')
@@ -19,11 +18,12 @@ def get_available_models():
 if "model" not in st.session_state:
     st.session_state["model"] = ""
 
-
-# Reset session state
+# build out the sidebar
 with st.sidebar:
+    # Allow choice of available models
     st.session_state["model"] = st.selectbox("Choose your model", get_available_models())
 
+    # Button to reset session state
     if st.button("Clear session"):
         st.session_state["messages"] = []
         if "initial_prompt" in st.session_state:
