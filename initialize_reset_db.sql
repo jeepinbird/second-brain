@@ -6,11 +6,11 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 */
 
-DROP TEXT SEARCH CONFIGURATION IS EXISTS simple_unaccent;
+DROP TEXT SEARCH CONFIGURATION IF EXISTS simple_unaccent;
 CREATE TEXT SEARCH CONFIGURATION simple_unaccent ( COPY = simple );
 ALTER TEXT SEARCH CONFIGURATION simple_unaccent ALTER MAPPING FOR hword, hword_part, word WITH unaccent, simple;
 
-DROP TEXT SEARCH CONFIGURATION IS EXISTS english_unaccent;
+DROP TEXT SEARCH CONFIGURATION IF EXISTS english_unaccent;
 CREATE TEXT SEARCH CONFIGURATION english_unaccent ( COPY = english );
 ALTER TEXT SEARCH CONFIGURATION english_unaccent ALTER MAPPING FOR hword, hword_part, word WITH unaccent, english_stem;
 
@@ -37,5 +37,5 @@ CREATE TABLE journal.events (
     id BIGSERIAL PRIMARY KEY,
     entry_id BIGINT NOT NULL REFERENCES journal.entries(id),
     content TEXT NOT NULL,
-    search TSVECTOR GENERATED ALWAYS AS (to_tsvector('english_unaccent', blurb)::tsvector) STORED
+    search TSVECTOR GENERATED ALWAYS AS (to_tsvector('english_unaccent', content)::tsvector) STORED
 );
