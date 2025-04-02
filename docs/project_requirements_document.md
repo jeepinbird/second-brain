@@ -23,13 +23,13 @@ To create a personal, web-based journaling application focused on capturing dail
 * **FR-JRN-02:** A new Markdown file must be automatically created for the current day upon first access if it doesn't exist.
 * **FR-JRN-03:** Files must follow the naming convention: `YYYY.MM.DD-Weekday.md`.
 * **FR-JRN-04:** The system must support Obsidian-compatible YAML frontmatter within each journal file for metadata (e.g., tags, custom properties).
-* **FR-JRN-05:** The system should support user-defined daily note templates.
+* **FR-JRN-05:** The system must support a user-defined daily note template stored as a Markdown file named `daily_template.md` located in the root of the journal. The system should replace simple placeholders (e.g., {{DATE}}, {{MONTH_LINK}}, {{PREV_DAY_LINK}}, {{NEXT_DAY_LINK}}) within the template when creating a new daily note. Specific placeholders TBD.
 * **FR-JRN-06:** The Markdown editor must support standard Markdown syntax, including nested bullet points.
 * **FR-JRN-07:** Users must be able to define and assign tags and properties (key-value pairs) to entries via YAML frontmatter.
-* **FR-JRN-08:** The system must parse markdown bullet points as discrete "events" within each journal entry.
+* **FR-JRN-08:** The system must parse markdown bullet points as discrete "events" within each journal entry. For the purpose of this system, every top-level bullet point within the "## Notes" section or similar designated content area is considered a discrete event.
 * **FR-JRN-09:** Sub-bullets (nested bullets) under a parent bullet must be treated as supporting details for that event.
 * **FR-JRN-10:** When searching or querying, the system must be able to retrieve events (bullets) individually rather than entire daily entries.
-* **FR-JRN-11:** For semantic search and NLP queries, each event (with its supporting details) should be treated as a discrete unit of content for embedding and retrieval.
+* **FR-JRN-11:** For semantic search and NLP queries, each event (with its supporting details) should be treated as a discrete unit of content for embedding and retrieval. Tags found within the text of an event bullet (e.g., #tagname) should be parsed and associated with the event in the database (`event_tag` table), in addition to any tags defined in the entry's YAML frontmatter.
 
 ### 2.2 Search and Retrieval
 * **FR-SRC-01:** Users must be able to perform full-text searches across all journal entries.
@@ -55,8 +55,9 @@ To create a personal, web-based journaling application focused on capturing dail
     - Prioritizes the most relevant memories (events) for inclusion in the LLM context
     - Includes appropriate temporal context (events before/after) when beneficial for answering the query
     - Structures the context efficiently to maximize the number of relevant memories that can fit in the LLM's context window
-* **FR-NLP-08:** For queries about recurring events or patterns, the system should be able to **aggregate information across multiple entries** to identify trends and provide comprehensive answers (e.g., "How often did I go running last month?").
-* **FR-NLP-09:** The system should provide **confidence indicators** with responses, conveying whether the answer is based on explicit mentions in the journal or inferred from available information.
+    - NOTE: For the MVP, prioritization based primarily on vector similarity ranking is sufficient, given the expected concise nature of individual events.
+* **FR-NLP-08:** For queries about recurring events or patterns, the system should be able to **aggregate information across multiple entries** to identify trends and provide comprehensive answers (e.g., "How often did I go running last month?"). For the MVP, this primarily involves simple aggregation like COUNT(*) based on filters derived from the query (e.g., counting events with a specific tag within a date range). LLM-driven synthesis of patterns is a potential future enhancement.
+* **FR-NLP-09:** The system should provide confidence indicators with responses. Confidence calculation should prioritize the presence of specific keywords from the query found directly in the source text, followed by the relevance scores from vector search. The number of source entries contributing to an answer should be considered but given lower weight. The method should convey whether the answer is based on explicit mentions or inferred information.
 
 ### 2.4 Web Interface (UI)
 * **FR-UI-01:** The web interface must present a three-panel layout: File Navigation (Left), Editor/Viewer (Center), Metadata/Properties (Right).
@@ -65,13 +66,13 @@ To create a personal, web-based journaling application focused on capturing dail
 * **FR-UI-04:** The file navigation panel must display the journal directory structure.
 * **FR-UI-05:** The metadata panel must display and allow editing of the current file's YAML frontmatter (tags, properties).
 * **FR-UI-06:** The center panel must provide a Markdown editor with a live preview or toggleable preview mode.
-* **FR-UI-07:** Basic note linking (e.g., `[[YYYY.MM.DD-Weekday]]`) should be supported visually or functionally.
+* **FR-UI-07:** The system must support standard Markdown links (`[display text](link)`). Links pointing to other daily notes (e.g., `[Note Text](YYYY.MM.DD-Weekday.md)`) must be rendered as clickable links that navigate the user to that specific daily note within the application. Support for viewing backlinks is not required for the MVP but may be considered as a future enhancement.
 
 ### 2.5 Metadata & Entity Awareness
 * **FR-META-01:** The system must recognize and index all tags (e.g., #medicine, #parenting) from journal entries.
 * **FR-META-02:** The system must detect and index entity links (e.g., [[People/Terri]]) from journal entries.
 * **FR-META-03:** The NLP query process must recognize when a user query likely relates to specific tags or entities and prioritize retrieval methods accordingly.
-* **FR-META-04:** The system should maintain entity relationships based on co-occurrence in journal entries (e.g., which people are mentioned together).
+* **FR-META-04:** The system should maintain entity relationships based on co-occurrence in journal entries (e.g., which people are mentioned together). Implementing robust co-occurrence tracking and querying may require additional schema design (e.g., an `entity_relations` table) and is considered a post-MVP enhancement.
 * **FR-META-05:** For entity-focused queries (e.g., "When did I last see [Person]?"), the system should retrieve all events mentioning that entity, sorted by recency.
 
 ### 2.6 Response Generation
@@ -80,6 +81,12 @@ To create a personal, web-based journaling application focused on capturing dail
 * **FR-RESP-03:** For temporal queries (e.g., "when did..."), responses should include specific dates when available.
 * **FR-RESP-04:** When a query cannot be answered with high confidence, the system should acknowledge this and provide the most relevant related information it could find.
 * **FR-RESP-05:** For pattern-based queries (e.g., "how often..."), the system should provide quantitative summaries when possible.
+
+### 2.7 Error Handling
+* **FR-ERR-01:** If the connection to the Ollama service fails during NLP query processing or embedding generation, the system must inform the user that the AI features are unavailable and suggest checking the Ollama service status. Basic text/metadata search should still function.
+* **FR-ERR-02:** If a Markdown file cannot be parsed (due to corruption or invalid format), the system should log the error, skip indexing that file, and potentially notify the user about the problematic file via logs or a dedicated UI section. It must not crash the application.
+* **FR-ERR-03:** If a database operation fails (e.g., cannot write index data), the system must log the error. For read operations (like search), it should inform the user that results may be incomplete. For write operations (like saving/indexing), it should indicate the data might not be fully indexed yet and potentially implement a retry mechanism or flag for re-indexing.
+* **FR-ERR-04:** When a search query (text, metadata, or NLP) yields zero results, the system must explicitly inform the user "No results found" rather than showing a blank screen or error.
 
 ## 3. Non-Functional Requirements
 
@@ -110,6 +117,9 @@ To create a personal, web-based journaling application focused on capturing dail
 * **NFR-DATA-02:** Database data (metadata index, vectors) must persist across container restarts via Docker volume mounts.
 * **NFR-DATA-03:** The primary data source remains the Markdown files; the database serves as an index/cache.
 
+### 3.6 Reliability
+* **NFR-ERR-01:** The application backend must handle unexpected errors gracefully, logging sufficient detail for debugging (respecting log levels defined in configuration) without exposing sensitive information or stack traces to the user interface.
+
 ## 4. System Architecture
 
 ### 4.1 Overview
@@ -118,31 +128,28 @@ A containerized web application consisting of a Go backend API, a Svelte fronten
 ```mermaid
 graph LR
     subgraph User Browser
-        Frontend[Svelte Frontend]
+        Frontend["Svelte Frontend"]
     end
 
     subgraph Local Docker Environment
-        Backend[Go Backend API]
-        DB[(DuckDB)]
+        Backend["Go Backend API (with embedded DuckDB)"]
         FS[(Filesystem: Markdown Files)]
-        NLP[Ollama Service - Local LLM]
+        NLP["Ollama Service - Local LLM"]
     end
 
     User --- Frontend
     Frontend -- REST API Calls --> Backend
     Backend -- File I/O --> FS
-    Backend -- DB Queries/Updates --> DB
     Backend -- NLP API Calls --> NLP
 
     style FS fill:#f9f,stroke:#333,stroke-width:2px
-    style DB fill:#ccf,stroke:#333,stroke-width:2px
     style NLP fill:#fcf,stroke:#333,stroke-width:2px
 ```
 
 ### 4.2 Components
 * **Frontend:** Svelte single-page application (SPA) providing the UI. Responsible for rendering views, handling user input, and communicating with the Backend API.
 * **Backend API:** Go-based RESTful API. Responsible for business logic, file system operations (reading/writing Markdown), database interactions (querying metadata, FTS, vectors), and orchestrating calls to the Ollama service.
-* **Database:** DuckDB instance. Stores indexed metadata (filenames, paths, dates, tags, properties), full-text search indexes, and vector embeddings.
+* **Database:** DuckDB, running in embedded mode within the Go Backend API. Stores indexed metadata (filenames, paths, dates, tags, properties), full-text search indexes, and vector embeddings in a file persisted via a Docker volume.
 * **NLP Service:** External local Ollama instance. Provides embedding generation and LLM inference capabilities, accessed via its API.
 * **Web Server (Optional/Proxy):** Nginx container (or similar) potentially used for serving static frontend assets, acting as a reverse proxy to the Go API, and handling HTTPS termination.
 
@@ -233,14 +240,25 @@ erDiagram
 ### 5.4 Deployment (Docker)
 * **Orchestration:** Docker Compose (`compose.yaml`).
 * **Services:**
-    * `backend`: Go application container. Mounts journal directory volume. Hot-reloading enabled for dev.
-    * `database`: DuckDB instance. Mounts database storage volume. (Note: DuckDB can also run embedded in the Go app, simplifying deployment but coupling lifecycles). *Decision needed: Embedded or Separate Container?*
+    * `backend`: Go application container. Mounts journal directory volume and config file. Hot-reloading enabled for dev. This container will run DuckDB in embedded mode.
     * `frontend`: Build-stage container to compile Svelte app, runtime served by Nginx or Go backend.
     * `nginx` (Optional): Serves static frontend assets, reverse proxies API requests to `backend`, handles SSL.
 * **Volumes:**
     * `journal_files`: Mounts host directory containing Markdown files into `backend`.
-    * `duckdb_data`: Persists DuckDB database file(s).
+    * `duckdb_data`: Mounts host directory or named volume to persist the DuckDB database file (.db and .wal) used by the backend service.
+    * `config`: Mounts the host `config.yaml` file into the backend service.
 * **Networking:** Defined network for inter-container communication. Port mapping for browser access (e.g., `8080:80` or `443:443`).
+
+### 5.5 Configuration
+* **TECH-CONF-01:** Application configuration shall be managed via a YAML file (e.g., config.yaml) mounted into the backend container.
+* **TECH-CONF-02:** The configuration file must allow specifying:
+    - Path to the journal directory (within the container).
+    - Filename of the daily note template (e.g., daily_template.md).
+    - Ollama service host URL and port.
+    - Specific embedding model name for Ollama.
+    - Specific generation model name for Ollama.
+    - Application log level (e.g., DEBUG, INFO, WARN, ERROR).
+* **TECH-CONF-03:** Default values should be provided for essential configurations where appropriate.
 
 ## 6. Development Roadmap
 
@@ -299,11 +317,11 @@ blurb: "Band parent meeting"
 - Finished watching [Zero Day](Shows/Zero-Day.md).
 ```
 
-### 7.2 Example Daily Template (using Obsidian's `Templater` plugin logic)
+### 7.2 Example Daily Template
 ```markdown
 ---
-date: <% tp.file.title.slice(0, 10).replace(/\./g,'-') %>
-month: "[[<% tp.date.now("MMMM-YYYY", 0, tp.file.title.slice(0, 10).replace(/\./g,'-'), "YYYY-MM-DD") %>]]"
+date: {{DATE}}
+month: {{MONTH_LINK}}
 weight: 
 wx_cond: 
 wx_high: 
