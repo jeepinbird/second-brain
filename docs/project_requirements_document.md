@@ -42,14 +42,21 @@ To create a personal, web-based journaling application focused on capturing dail
 ### 2.3 Natural Language Processing (NLP)
 * **FR-NLP-01:** The system must provide an interface for users to input natural language queries about their journal entries.
 * **FR-NLP-02:** NLP queries must be processed using a local Large Language Model (LLM) via Ollama.
-* **FR-NLP-03 (Revised):** The system must employ a **hybrid Retrieval-Augmented Generation (RAG)** strategy. This involves:
-	- Analyzing the user's query (potentially guided by the LLM or pre-processing logic) to determine the most promising initial retrieval method(s).
-	- Utilizing one or a combination of retrieval methods based on the analysis, including: vector similarity search, full-text search (FTS), tag filtering, property filtering, and date range filtering derived from the query.
-	- Retrieving relevant journal entry content and/or metadata based on the selected method(s) to serve as context for the LLM.
+* **FR-NLP-03:** The system must employ a **multi-stage, adaptive Retrieval-Augmented Generation (RAG)** strategy. This involves:
+    - Using the LLM to analyze the query to identify key elements: people, places, events, time periods, and the information type being requested
+    - Selecting the most promising initial retrieval method(s) based on query analysis (vector search for conceptual queries, metadata filtering for specific attributes, date filtering for temporal queries)
+    - Retrieving relevant journal entry content and/or metadata using the selected method(s)
+    - Having the LLM evaluate the relevance and completeness of the retrieved context
+    - If necessary, initiating additional retrieval attempts with alternative methods until sufficient context is found or the system determines the information isn't available
 * **FR-NLP-04:** LLM and embedding generation must utilize local GPU resources for acceleration.
 * **FR-NLP-05:** The system must **pre-process user queries to resolve relative or ambiguous date/time references** (e.g., "last year", "yesterday", "next month") into specific dates or date ranges using standard date/time logic. This resolution should occur _before_ executing the primary RAG retrieval step.
-- **FR-NLP-06:** The system should **rewrite the user query** to incorporate the resolved dates/times before passing it to the RAG retrieval selection process or the LLM, enhancing clarity. (e.g., "What did I get Terri for her birthday last year?" might be internally processed with a date filter for 2024).
-- **FR-NLP-07:** The RAG retrieval process must be **iterative and corrective**. If the initially chosen retrieval strategy (or combination) yields insufficient or low-relevance results (based on defined thresholds or LLM assessment), the system must automatically attempt alternative retrieval methods or refined query parameters to find relevant context before finalizing the LLM response.
+* **FR-NLP-06:** The system should **rewrite the user query** to incorporate the resolved dates/times before passing it to the RAG retrieval selection process or the LLM, enhancing clarity. (e.g., "What did I get Terri for her birthday last year?" might be internally processed with a date filter for 2024).
+* **FR-NLP-07:** The system should implement a **context window management strategy** that:
+    - Prioritizes the most relevant memories (events) for inclusion in the LLM context
+    - Includes appropriate temporal context (events before/after) when beneficial for answering the query
+    - Structures the context efficiently to maximize the number of relevant memories that can fit in the LLM's context window
+* **FR-NLP-08:** For queries about recurring events or patterns, the system should be able to **aggregate information across multiple entries** to identify trends and provide comprehensive answers (e.g., "How often did I go running last month?").
+* **FR-NLP-09:** The system should provide **confidence indicators** with responses, conveying whether the answer is based on explicit mentions in the journal or inferred from available information.
 
 ### 2.4 Web Interface (UI)
 * **FR-UI-01:** The web interface must present a three-panel layout: File Navigation (Left), Editor/Viewer (Center), Metadata/Properties (Right).
@@ -59,6 +66,20 @@ To create a personal, web-based journaling application focused on capturing dail
 * **FR-UI-05:** The metadata panel must display and allow editing of the current file's YAML frontmatter (tags, properties).
 * **FR-UI-06:** The center panel must provide a Markdown editor with a live preview or toggleable preview mode.
 * **FR-UI-07:** Basic note linking (e.g., `[[YYYY.MM.DD-Weekday]]`) should be supported visually or functionally.
+
+### 2.5 Metadata & Entity Awareness
+* **FR-META-01:** The system must recognize and index all tags (e.g., #medicine, #parenting) from journal entries.
+* **FR-META-02:** The system must detect and index entity links (e.g., [[People/Terri]]) from journal entries.
+* **FR-META-03:** The NLP query process must recognize when a user query likely relates to specific tags or entities and prioritize retrieval methods accordingly.
+* **FR-META-04:** The system should maintain entity relationships based on co-occurrence in journal entries (e.g., which people are mentioned together).
+* **FR-META-05:** For entity-focused queries (e.g., "When did I last see [Person]?"), the system should retrieve all events mentioning that entity, sorted by recency.
+
+### 2.6 Response Generation
+* **FR-RESP-01:** When answering a query, the system must include direct references to the relevant journal entries that support its response.
+* **FR-RESP-02:** When multiple journal entries contribute to an answer, the system should synthesize the information into a coherent response rather than listing individual entries.
+* **FR-RESP-03:** For temporal queries (e.g., "when did..."), responses should include specific dates when available.
+* **FR-RESP-04:** When a query cannot be answered with high confidence, the system should acknowledge this and provide the most relevant related information it could find.
+* **FR-RESP-05:** For pattern-based queries (e.g., "how often..."), the system should provide quantitative summaries when possible.
 
 ## 3. Non-Functional Requirements
 
@@ -136,6 +157,13 @@ graph LR
 8.  Backend API sends the formatted response back to the Svelte frontend.
 9.  Frontend displays the response to the user.
 
+### 4.4 Query Planner
+* **FR-QP-01:** The system must implement a Query Planner component that acts as an intermediary between the LLM query analysis and database operations.
+* **FR-QP-02:** The Query Planner must be able to translate natural language query intentions into specific database retrieval strategies.
+* **FR-QP-03:** The Query Planner must support prioritization of different retrieval methods based on query characteristics (e.g., tag searches for tagged content, entity searches for queries about people/places).
+* **FR-QP-04:** The Query Planner must be capable of executing multiple retrieval strategies in parallel or sequence as appropriate.
+* **FR-QP-05:** The Query Planner must merge and rank results from different retrieval methods based on relevance to the original query.
+
 ## 5. Technical Specifications
 
 ### 5.1 Backend
@@ -207,7 +235,7 @@ erDiagram
 * **Services:**
     * `backend`: Go application container. Mounts journal directory volume. Hot-reloading enabled for dev.
     * `database`: DuckDB instance. Mounts database storage volume. (Note: DuckDB can also run embedded in the Go app, simplifying deployment but coupling lifecycles). *Decision needed: Embedded or Separate Container?*
-    * `frontend`: Build-stage container to compile Svelte app, runtime likely served by Nginx or Go backend.
+    * `frontend`: Build-stage container to compile Svelte app, runtime served by Nginx or Go backend.
     * `nginx` (Optional): Serves static frontend assets, reverse proxies API requests to `backend`, handles SSL.
 * **Volumes:**
     * `journal_files`: Mounts host directory containing Markdown files into `backend`.
