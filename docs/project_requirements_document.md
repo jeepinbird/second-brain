@@ -96,6 +96,11 @@ To create a personal, web-based journaling application focused on capturing dail
 * **NFR-PERF-03:** Semantic search response time: < 1 second.
 * **NFR-PERF-04:** NLP query response time (including RAG and LLM generation): < 5 seconds (dependent on LLM and context size).
 * **NFR-PERF-05:** Embedding generation upon file save should not significantly impede the user's workflow.
+* **NFR-PERF-06:** Embedding generation must be optimized to minimize latency:
+    - Batch processing for initial indexing
+    - Parallel processing where possible
+    - Caching of generated embeddings
+    - Prioritization of recently modified files
 
 ### 3.2 Security
 * **NFR-SEC-01:** All application components must run locally by default, minimizing external network dependencies.
@@ -170,6 +175,39 @@ graph LR
 * **FR-QP-03:** The Query Planner must support prioritization of different retrieval methods based on query characteristics (e.g., tag searches for tagged content, entity searches for queries about people/places).
 * **FR-QP-04:** The Query Planner must be capable of executing multiple retrieval strategies in parallel or sequence as appropriate.
 * **FR-QP-05:** The Query Planner must merge and rank results from different retrieval methods based on relevance to the original query.
+
+### 4.5 Indexing Process Flow
+* **FR-IDX-01:** The system must implement a file-watching mechanism that detects changes (creation, modification, deletion) to markdown files in the journal directory.
+* **FR-IDX-02:** Upon detecting a file change, the system must:
+    - For new/modified files: Parse the file, extract metadata (YAML frontmatter), events (bullet points), tags, and generate embeddings. Then update the corresponding database records.
+    - For deleted files: Remove all associated records from the database.
+* **FR-IDX-03:** The indexing process must be non-blocking, allowing users to continue using the application during background indexing.
+* **FR-IDX-04:** The system must maintain a queue of files to be indexed to handle rapid changes to multiple files.
+* **FR-IDX-05:** Indexing status indicators should be visible in the UI when indexing is in progress.
+
+### 4.6 File Write Safety
+* **FR-WRITE-01:** Before writing changes to a markdown file, the system must:
+    - Create a temporary backup of the original file (e.g., as `.filename.md.bak`)
+    - Verify that the parsed structure of the modified content maintains integrity
+    - Only upon successful verification, write the changes to the original file
+* **FR-WRITE-02:** If a write operation fails, the system must:
+    - Restore from the backup if possible
+    - Log detailed error information
+    - Notify the user of the failure and restoration attempt
+* **FR-WRITE-03:** The system must implement a transaction-like approach for writing:
+    - First write to a temporary file
+    - Then perform an atomic rename operation to replace the original file
+    - This minimizes the risk of partial writes leading to corruption
+* **FR-WRITE-04:** The system should maintain a configurable number of daily backups in a separate directory
+
+### 4.7 Initial Database Setup
+* **FR-INIT-01:** Upon first startup or when detecting an empty database, the system must:
+    - Scan the entire journal directory recursively for markdown files
+    - Display a "First-time setup" indicator with progress information
+    - Process all files to build the initial database state
+* **FR-INIT-02:** The initial setup process must be resumable if interrupted
+* **FR-INIT-03:** During initial setup, the system should provide estimates of completion time and progress
+* **FR-INIT-04:** Basic application functionality (viewing and editing files) should be available during initial indexing, with search features becoming available as indexing progresses
 
 ## 5. Technical Specifications
 
@@ -260,6 +298,32 @@ erDiagram
     - Application log level (e.g., DEBUG, INFO, WARN, ERROR).
 * **TECH-CONF-03:** Default values should be provided for essential configurations where appropriate.
 
+### 5.6 Database Management
+* **TECH-DB-01:** The system must provide a "Re-Index All" function accessible via the UI that:
+    - Optionally clears all existing database records (user-configurable)
+    - Scans the entire journal directory for markdown files
+    - Processes each file to rebuild the database index from scratch
+    - Displays progress indicators during the operation
+* **TECH-DB-02:** The system must implement an incremental sync mechanism that:
+    - Compares file modification timestamps against the last indexed timestamp stored in the database
+    - Only reprocesses files that have been modified since they were last indexed
+    - Runs automatically on application startup and periodically while the application is running
+    - Can be manually triggered by the user via a "Sync Now" button
+* **TECH-DB-03:** The system must track orphaned database records (records referring to files that no longer exist) and remove them during sync operations.
+
+### 5.7 Markdown Parsing Rules
+* **TECH-PARSE-01:** The system must identify daily journal entries through the following rules:
+    - Files must follow the naming convention: `YYYY.MM.DD-Weekday.md`
+    - Files must contain valid YAML frontmatter at the beginning of the file
+* **TECH-PARSE-02:** Events (discrete database entries) are extracted as follows:
+    - Each top-level bullet point within a section titled "## Notes" (or other configured section name) represents one event
+    - Sub-bullets under a top-level bullet are considered supporting details for that event
+    - The event content stored in the database must include both the top-level bullet and all of its sub-bullets
+* **TECH-PARSE-03:** Tags are identified and extracted from:
+    - The "tags" array in the YAML frontmatter (applying to the entire entry)
+    - Inline hashtags within bullet points (e.g., "#meeting") which apply to the specific event
+* **TECH-PARSE-04:** Entity links (e.g., "[[People/Terri]]") must be parsed and stored in a separate table to enable entity-based queries
+
 ## 6. Development Roadmap
 
 ### Phase 1: Core MVP
@@ -282,9 +346,51 @@ erDiagram
 * **Tasks:** UI theme polishing, Responsiveness improvements, Implement daily templates, Add note linking support, Performance optimization (query tuning, caching), Investigate backup/export options, Add optional basic authentication.
 * **Deliverable:** Feature-complete, polished v1.0 application.
 
-## 7. Appendix
+## 7. Data Processing Implementation
 
-### 7.1 Example Daily Entry (directly from Obsidian)
+### 7.1 Markdown Processing Workflow
+
+* **IMPL-PROC-01:** The system must implement a file processing workflow that:
+    - Separates YAML frontmatter from markdown body using regex pattern matching
+    - Extracts metadata fields (date, weight, weather conditions, tags, blurb) from the frontmatter
+    - Processes the markdown body to extract discrete events
+
+* **IMPL-PROC-02:** Event extraction must follow these rules:
+    - Each top-level bullet point (line starting with "- ") in the "## Notes" section is treated as a discrete event
+    - Sub-bullets are concatenated to their parent bullet to form a complete event entry
+    - Special formatting is applied to ensure proper sentence structure (e.g., adding periods at end if missing)
+    - Embedded links should be preserved in the original file but simplified in the database representation
+
+* **IMPL-PROC-03:** The system must implement proper tag extraction:
+    - Tags from the frontmatter YAML apply to the entire entry
+    - Inline hashtags within bullet points (e.g., "#meeting") apply to the specific event
+    - Tags with hierarchical structure (e.g., "purchases/subscriptions") must be properly parsed and searchable by both the full tag and individual components
+
+### 7.2 Database Synchronization Workflow
+
+* **IMPL-SYNC-01:** The system must implement a two-way synchronization mechanism:
+    - Reading from files to database: Triggered on startup, periodic sync, and manual "Re-Index" action
+    - Writing from database to files: Triggered when edits are made through the UI
+
+* **IMPL-SYNC-02:** For safe write operations, the system must:
+    - Create a backup of the original file before modification
+    - Maintain the exact structure of the original file, only changing the edited portions
+    - Preserve all YAML frontmatter fields even if they're not used by the application
+    - Use atomic file operations to prevent partial writes
+  
+* **IMPL-SYNC-03:** Database re-indexing must be implemented with the following options:
+    - Full reindex: Clear database and process all files from scratch
+    - Incremental sync: Only process files modified since last indexed (based on file timestamp)
+    - Orphan cleanup: Remove database records for files that no longer exist
+
+* **IMPL-SYNC-04:** The system must maintain a transaction log of all write operations to markdown files to enable:
+    - Audit trail of changes
+    - Potential rollback of changes if needed
+    - Recovery in case of application crash during write operations
+
+## 8. Appendix
+
+### 8.1 Example Daily Entry (directly from Obsidian)
 ```markdown
 ---
 date: 2025-03-11
@@ -317,7 +423,7 @@ blurb: "Band parent meeting"
 - Finished watching [Zero Day](Shows/Zero-Day.md).
 ```
 
-### 7.2 Example Daily Template
+### 8.2 Example Daily Template
 ```markdown
 ---
 date: {{DATE}}
