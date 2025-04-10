@@ -113,7 +113,7 @@ To create a personal, web-based journaling application focused on capturing dail
 * **NFR-USA-03:** UI elements (panels, sections) should be collapsible/resizable where appropriate.
 
 ### 3.4 Maintainability
-* **NFR-MAINT-01:** Code must adhere to standard Go and Svelte best practices.
+* **NFR-MAINT-01:** Code must adhere to standard Python best practices (PEP 8).
 * **NFR-MAINT-02:** Backend and Frontend concerns must be clearly separated.
 * **NFR-MAINT-03:** Docker configuration must support easy local development workflows (e.g., hot-reloading for backend).
 
@@ -128,7 +128,7 @@ To create a personal, web-based journaling application focused on capturing dail
 ## 4. System Architecture
 
 ### 4.1 Overview
-A containerized web application consisting of a Go backend API, a Svelte frontend, a DuckDB database, and integration with a local Ollama service. Communication follows a standard client-server REST API pattern.
+A containerized web application consisting of a Python FastAPI backend, a Svelte frontend, SQLite and ChromaDB for data storage, and integration with a local Ollama service. Communication follows a standard client-server REST API pattern.
 
 ```mermaid
 graph LR
@@ -137,14 +137,18 @@ graph LR
     end
 
     subgraph Local Docker Environment
-        Backend["Go Backend API (with embedded DuckDB)"]
+        Backend["Python FastAPI Backend"]
         FS[(Filesystem: Markdown Files)]
+        SQLite[(SQLite Database)]
+        ChromaDB[(ChromaDB Vector Store)]
         NLP["Ollama Service - Local LLM"]
     end
 
     User --- Frontend
     Frontend -- REST API Calls --> Backend
     Backend -- File I/O --> FS
+    Backend -- Metadata Queries --> SQLite
+    Backend -- Vector Queries --> ChromaDB
     Backend -- NLP API Calls --> NLP
 
     style FS fill:#f9f,stroke:#333,stroke-width:2px
@@ -153,16 +157,18 @@ graph LR
 
 ### 4.2 Components
 * **Frontend:** Svelte single-page application (SPA) providing the UI. Responsible for rendering views, handling user input, and communicating with the Backend API.
-* **Backend API:** Go-based RESTful API. Responsible for business logic, file system operations (reading/writing Markdown), database interactions (querying metadata, FTS, vectors), and orchestrating calls to the Ollama service.
-* **Database:** DuckDB, running in embedded mode within the Go Backend API. Stores indexed metadata (filenames, paths, dates, tags, properties), full-text search indexes, and vector embeddings in a file persisted via a Docker volume.
+* **Backend API:** FastAPI-based RESTful API. Responsible for business logic, file system operations (reading/writing Markdown), database interactions (querying metadata, FTS, vectors), and orchestrating calls to the Ollama service.
+* **Databases:** 
+  * SQLite, storing indexed metadata (filenames, paths, dates, tags, properties) with full-text search capabilities.
+  * ChromaDB, storing vector embeddings for semantic search.
 * **NLP Service:** External local Ollama instance. Provides embedding generation and LLM inference capabilities, accessed via its API.
-* **Web Server (Optional/Proxy):** Nginx container (or similar) potentially used for serving static frontend assets, acting as a reverse proxy to the Go API, and handling HTTPS termination.
+* **Web Server (Optional/Proxy):** Nginx container (or similar) potentially used for serving static frontend assets, acting as a reverse proxy to the FastAPI, and handling HTTPS termination.
 
 ### 4.3 Data Flow Example (NLP Query)
 1.  User inputs query into Svelte frontend.
 2.  Frontend sends query to Backend API (`/api/query/nlp`).
-3.  Backend API sends query text to Ollama for embedding.
-4.  Backend API uses the resulting vector to query DuckDB for semantically similar journal entry vectors.
+3.  Backend API extracts embeddings using SentenceTransformers library.
+4.  Backend API uses the resulting vector to query ChromaDB for semantically similar journal entry vectors.
 5.  Backend API retrieves the content of the top N relevant Markdown files from the filesystem.
 6.  Backend API constructs a prompt (including retrieved context) and sends it to Ollama for generation.
 7.  Backend API receives the LLM response.
@@ -177,7 +183,7 @@ graph LR
 * **FR-QP-05:** The Query Planner must merge and rank results from different retrieval methods based on relevance to the original query.
 
 ### 4.5 Indexing Process Flow
-* **FR-IDX-01:** The system must implement a file-watching mechanism that detects changes (creation, modification, deletion) to markdown files in the journal directory.
+* **FR-IDX-01:** The system must implement a file-watching mechanism that detects changes (creation, modification, deletion) to markdown files in the journal directory using the watchdog library.
 * **FR-IDX-02:** Upon detecting a file change, the system must:
     - For new/modified files: Parse the file, extract metadata (YAML frontmatter), events (bullet points), tags, and generate embeddings. Then update the corresponding database records.
     - For deleted files: Remove all associated records from the database.
@@ -212,12 +218,13 @@ graph LR
 ## 5. Technical Specifications
 
 ### 5.1 Backend
-* **Language/Framework:** Go (using standard library `net/http` or a lightweight router like Chi or Gin).
-* **Database Interaction:** DuckDB Go driver. SQL for queries.
-* **File System:** Standard Go `os` and `io/ioutil` packages for file operations.
-* **NLP Integration:** HTTP client calls to the Ollama API endpoint(s) for embedding and generation.
-* **Indexing:** Logic to parse Markdown files (including YAML frontmatter) upon creation/modification and update DuckDB indexes (metadata, FTS, vectors). Triggered by file save or a background watcher.
-* **Embedding Model:** Use `nomic-embed-text` for semantic search.
+* **Language/Framework:** Python with FastAPI.
+* **Database Interaction:** SQLite (via SQLAlchemy ORM) and ChromaDB.
+* **File System:** Python's pathlib and watchdog packages for file operations and monitoring.
+* **NLP Integration:** Direct SentenceTransformers integration for embeddings and HTTP client calls to the Ollama API endpoint for LLM generation.
+* **Indexing:** Logic to parse Markdown files (including YAML frontmatter) using libraries like PyYAML and markdown-it-py upon creation/modification and update database indexes.
+* **Embedding Model:** SentenceTransformers with a suitable model like `all-MiniLM-L6-v2` for semantic search.
+* **Concurrency:** Asyncio and FastAPI's built-in async support for non-blocking I/O operations.
 
 ### 5.2 Frontend
 * **Framework:** Svelte / SvelteKit
@@ -225,65 +232,69 @@ graph LR
 * **Markdown Editor:** CodeMirror 6 configured for Markdown.
 * **Markdown Rendering:** `marked.js` or similar library for HTML preview.
 * **Interactivity:** Alpine.js (optional, if needed for small dynamic behaviors outside Svelte components).
-* **API Communication:** Standard `Workspace` API or a lightweight HTTP client library.
+* **API Communication:** Standard fetch API or a lightweight HTTP client library.
 
-### 5.3 Database (DuckDB)
-* **Schema:**
-    * `entry`: (id BIGINT PRIMARY KEY, date DATE UNIQUE, file_path TEXT, file_name TEXT, created_at TIMESTAMP, modified_at TIMESTAMP, weight USMALLINT, wx_cond TEXT, wx_high SMALLINT, wx_low SMALLINT, blurb TEXT)
-    * `entry_tag`: (entry_id BIGINT, tag TEXT) -- For entry-level tags
-    * `event`: (id BIGINT PRIMARY KEY, entry_id BIGINT, content TEXT, has_children BOOLEAN) -- For bullet points (events)
-    * `event_tag`: (event_id BIGINT, tag TEXT) -- For event-level tags
-    * `vector`: (event_id BIGINT, vector BLOB) -- Vectors for events (including their details)
-    * FTS Index: Created on event content using DuckDB's `fts` extension.
-* **Usage:** Metadata querying, FTS, vector similarity search (`array_cosine_similarity` or dedicated vector functions).
+### 5.3 Database Schema
+* **SQLite Schema:**
+    * `entry`: (id INTEGER PRIMARY KEY, date DATE UNIQUE, file_path TEXT, file_name TEXT, created_at TIMESTAMP, modified_at TIMESTAMP, weight INTEGER, wx_cond TEXT, wx_high INTEGER, wx_low INTEGER, blurb TEXT)
+    * `entry_tag`: (entry_id INTEGER REFERENCES entry(id), tag TEXT, PRIMARY KEY (entry_id, tag))
+    * `event`: (id INTEGER PRIMARY KEY, entry_id INTEGER REFERENCES entry(id), content TEXT, has_children BOOLEAN)
+    * `event_tag`: (event_id INTEGER REFERENCES event(id), tag TEXT, PRIMARY KEY (event_id, tag))
+    * Full-text search using SQLite's FTS5 extension: (CREATE VIRTUAL TABLE event_fts USING fts5(content, content='event', content_rowid='id'))
+* **ChromaDB:**
+    * Collection: `event_embeddings` with metadata referencing event_id from SQLite.
 
 ```mermaid
 erDiagram
     ENTRY {
-        id BIGINT PK "Primary Key"
+        id INTEGER PK "Primary Key"
         date DATE "Entry calendar date"
         file_path TEXT "Path to file"
         file_name TEXT "Name of file"
         created_at TIMESTAMP "File create timestamp"
         modified_at TIMESTAMP "File modified timestamp"
-        weight USMALLINT "User's weight"
+        weight INTEGER "User's weight"
         wx_cond TEXT "Weather - Unicode emoji representation"
-        wx_high SMALLINT "Weather - High temp"
-        wx_low SMALLINT "Weather - Low temp"
+        wx_high INTEGER "Weather - High temp"
+        wx_low INTEGER "Weather - Low temp"
         blurb TEXT "Small, concise description of entry"
     }
     ENTRY_TAG {
-        entry_id TEXT FK "Foreign Key (References ENTRY)"
+        entry_id INTEGER FK "Foreign Key (References ENTRY)"
         tag TEXT "Tag Name"
     }
     EVENT {
-        id BIGINT PK "Primary Key"
-        entry_id BIGINT FK "Foreign Key (References ENTRY)"
+        id INTEGER PK "Primary Key"
+        entry_id INTEGER FK "Foreign Key (References ENTRY)"
         content TEXT "Concatenation of bullet and sub-bullet points"
+        has_children BOOLEAN "Whether this event has sub-bullets"
     }
     EVENT_TAG {
-        event_id TEXT FK "Foreign Key (References EVENT)"
+        event_id INTEGER FK "Foreign Key (References EVENT)"
         tag TEXT "Tag Name"
     }
-    VECTOR {
-        event_id TEXT FK "Foreign Key (References EVENT)"
-        vector BLOB "Embedding vector of content"
+    VECTOR_STORE {
+        collection_name TEXT "ChromaDB Collection"
+        event_id INTEGER "References EVENT id in metadata"
+        embedding BLOB "Vector embedding data"
+        document TEXT "Original event content"
     }
     ENTRY ||--o{ ENTRY_TAG : "has"
     ENTRY ||--|{ EVENT : "has"
     EVENT ||--o{ EVENT_TAG : "has"
-    EVENT ||--o{ VECTOR : "has"
+    EVENT ||--o{ VECTOR_STORE : "has"
 ```
 
 ### 5.4 Deployment (Docker)
 * **Orchestration:** Docker Compose (`compose.yaml`).
 * **Services:**
-    * `backend`: Go application container. Mounts journal directory volume and config file. Hot-reloading enabled for dev. This container will run DuckDB in embedded mode.
-    * `frontend`: Build-stage container to compile Svelte app, runtime served by Nginx or Go backend.
+    * `backend`: Python FastAPI application container. Mounts journal directory volume and config file. Hot-reloading enabled for dev.
+    * `frontend`: Build-stage container to compile Svelte app, runtime served by Nginx or FastAPI static file serving.
+    * `ollama`: Container running the Ollama service with appropriate models.
     * `nginx` (Optional): Serves static frontend assets, reverse proxies API requests to `backend`, handles SSL.
 * **Volumes:**
     * `journal_files`: Mounts host directory containing Markdown files into `backend`.
-    * `duckdb_data`: Mounts host directory or named volume to persist the DuckDB database file (.db and .wal) used by the backend service.
+    * `database_data`: Mounts host directory to persist the SQLite database file and ChromaDB data.
     * `config`: Mounts the host `config.yaml` file into the backend service.
 * **Networking:** Defined network for inter-container communication. Port mapping for browser access (e.g., `8080:80` or `443:443`).
 
@@ -293,8 +304,8 @@ erDiagram
     - Path to the journal directory (within the container).
     - Filename of the daily note template (e.g., daily_template.md).
     - Ollama service host URL and port.
-    - Specific embedding model name for Ollama.
     - Specific generation model name for Ollama.
+    - SentenceTransformers model name for embeddings.
     - Application log level (e.g., DEBUG, INFO, WARN, ERROR).
 * **TECH-CONF-03:** Default values should be provided for essential configurations where appropriate.
 
@@ -328,17 +339,17 @@ erDiagram
 
 ### Phase 1: Core MVP
 * **Goal:** Basic journaling and viewing functionality.
-* **Tasks:** Setup Go backend with basic file read/write, Setup Svelte frontend with CodeMirror editor and basic file list, Docker Compose setup for Go+Svelte, Implement daily note creation logic.
+* **Tasks:** Setup Python FastAPI backend with basic file read/write, Setup Svelte frontend with CodeMirror editor and basic file list, Docker Compose setup for FastAPI+Svelte, Implement daily note creation logic.
 * **Deliverable:** Locally runnable app to create, view, and edit daily Markdown notes.
 
 ### Phase 2: Search & Metadata
 * **Goal:** Implement robust search and Obsidian-like UI elements.
-* **Tasks:** Implement DuckDB integration, File parsing for YAML frontmatter, Metadata indexing, Text search implementation, Tag/Property filtering, Develop 3-panel UI layout, Implement Properties panel.
+* **Tasks:** Implement SQLite integration, File parsing for YAML frontmatter, Metadata indexing, Text search implementation, Tag/Property filtering, Develop 3-panel UI layout, Implement Properties panel.
 * **Deliverable:** App with functional text/metadata search and refined UI.
 
 ### Phase 3: AI Features
 * **Goal:** Integrate semantic search and NLP querying.
-* **Tasks:** Implement embedding generation on file save, Integrate Ollama client in backend, Build vector index in DuckDB, Implement semantic search endpoint, Create NLP query interface in frontend, Implement RAG logic in backend.
+* **Tasks:** Implement embedding generation on file save using SentenceTransformers, Setup ChromaDB for vector storage, Integrate Ollama client in backend, Build vector index, Implement semantic search endpoint, Create NLP query interface in frontend, Implement RAG logic in backend.
 * **Deliverable:** App with functional semantic search and natural language query capability.
 
 ### Phase 4: Polish & Refinement
@@ -351,7 +362,7 @@ erDiagram
 ### 7.1 Markdown Processing Workflow
 
 * **IMPL-PROC-01:** The system must implement a file processing workflow that:
-    - Separates YAML frontmatter from markdown body using regex pattern matching
+    - Separates YAML frontmatter from markdown body using regex pattern matching and PyYAML
     - Extracts metadata fields (date, weight, weather conditions, tags, blurb) from the frontmatter
     - Processes the markdown body to extract discrete events
 
@@ -417,7 +428,7 @@ erDiagram
     - Pushes notifications about file changes to all connected clients
     - Updates the UI in real-time when changes occur, whether made through the UI or directly to the files
 
-* **IMPL-REALTIME-02:** File system watching must be implemented using the `fsnotify` package with:
+* **IMPL-REALTIME-02:** File system watching must be implemented using the watchdog package with:
     - Efficient event filtering to avoid unnecessary processing
     - Debouncing mechanisms to handle rapid successive changes
     - Graceful handling of temporary files created by text editors
@@ -439,19 +450,19 @@ erDiagram
     - Uses file modification timestamps to detect changes
     - Maintains a manifest of indexed files with their timestamps
 
-* **IMPL-PERF-02:** Background processing must be implemented with Go's concurrency primitives:
-    - Use goroutines for computationally intensive tasks like embedding generation
-    - Implement worker pools for parallel processing of multiple files
-    - Use channels for coordinating between file watchers, indexers, and the API server
+* **IMPL-PERF-02:** Background processing must be implemented with Python's concurrency primitives:
+    - Use asyncio for I/O-bound tasks like file reading and API calls
+    - Implement ThreadPoolExecutor for CPU-bound tasks like parsing and embedding generation
+    - Use queues for coordinating between file watchers, indexers, and the API server
 
 * **IMPL-PERF-03:** The system must implement a multi-level caching strategy:
     - In-memory cache for frequently accessed file content and search results
     - Disk-based cache for generated embeddings and other persistent computed data
     - Cache invalidation mechanisms tied to the file change notification system
 
-* **IMPL-PERF-04:** DuckDB query optimization must include:
-    - Proper indexing on frequently queried columns (date, tags, file_path)
-    - For vector searches, implementation of approximate nearest neighbor algorithms
+* **IMPL-PERF-04:** Database query optimization must include:
+    - Proper indexing on frequently queried columns in SQLite (date, tags, file_path)
+    - For ChromaDB vector searches, use of appropriate nearest neighbor search parameters
     - Query plan monitoring and optimization for common query patterns
 
 * **IMPL-PERF-05:** All list views must implement pagination to:
@@ -540,4 +551,101 @@ blurb:
 
 ## Notes
 - 
+```
+
+### 9.3 Backend Component Architecture
+```
+secondbrain/
+├── app/                   # FastAPI application
+│   ├── api/               # API routes
+│   │   ├── __init__.py
+│   │   ├── entries.py     # Journal entry endpoints
+│   │   ├── events.py      # Event (bullet) endpoints
+│   │   ├── search.py      # Search endpoints
+│   │   └── query.py       # Natural language query endpoints
+│   ├── core/              # Core application logic
+│   │   ├── __init__.py
+│   │   ├── config.py      # Configuration management
+│   │   ├── security.py    # Authentication (if needed)
+│   │   └── logging.py     # Logging setup
+│   ├── db/                # Database interactions
+│   │   ├── __init__.py
+│   │   ├── sqlite.py      # SQLite session and models
+│   │   ├── chroma.py      # ChromaDB client
+│   │   └── sync.py        # DB synchronization logic
+│   ├── models/            # Data models (Pydantic)
+│   │   ├── __init__.py
+│   │   ├── entry.py       # Journal entry models
+│   │   ├── event.py       # Event models
+│   │   └── search.py      # Search/query models
+│   ├── services/          # Business logic services
+│   │   ├── __init__.py
+│   │   ├── file_service.py     # File operations
+│   │   ├── markdown_service.py # Markdown processing
+│   │   ├── embedding_service.py # Embedding generation
+│   │   ├── ollama_service.py   # LLM integration
+│   │   └── rag_service.py      # RAG implementation
+│   ├── utils/             # Utility functions
+│   │   ├── __init__.py
+│   │   ├── file_utils.py  # File handling utilities
+│   │   ├── date_utils.py  # Date handling 
+│   │   └── text_utils.py  # Text processing
+│   ├── main.py            # FastAPI app initialization
+│   └── static/            # Static files (if served by FastAPI)
+│       └── index.html     # SPA entry point
+├── tests/                 # Test suite
+│   ├── __init__.py
+│   ├── conftest.py        # Test fixtures
+│   ├── test_api/          # API tests
+│   ├── test_services/     # Service tests
+│   └── test_utils/        # Utility tests
+├── alembic/               # Database migrations
+├── config.yaml            # Configuration file
+├── requirements.txt       # Python dependencies
+└── Dockerfile             # Docker build file
+```
+
+### 9.4 Core API Endpoints
+```
+GET    /api/health                  - Health check
+GET    /api/entries                 - List all entries
+GET    /api/entries/{date}          - Get entry by date
+POST   /api/entries/{date}          - Create/update entry
+GET    /api/entries/{date}/events   - Get events for entry
+POST   /api/search/text             - Perform text search
+POST   /api/search/semantic         - Perform semantic search
+POST   /api/query/nlp               - Process natural language query
+POST   /api/reindex                 - Trigger reindexing
+GET    /api/reindex/status          - Get reindexing status
+```
+
+### 9.5 Frontend Component Structure
+```
+src/
+├── lib/
+│   ├── components/
+│   │   ├── layout/
+│   │   │   ├── ThreeColumnLayout.svelte
+│   │   │   ├── NavigationPanel.svelte
+│   │   │   ├── EditorPanel.svelte
+│   │   │   └── MetadataPanel.svelte
+│   │   ├── editor/
+│   │   │   ├── MarkdownEditor.svelte
+│   │   │   └── YamlEditor.svelte
+│   │   ├── navigation/
+│   │   │   ├── FileTree.svelte
+│   │   │   └── Calendar.svelte
+│   │   └── common/
+│   │       ├── Button.svelte
+│   │       └── Loader.svelte
+│   ├── api/
+│   │   └── client.js
+│   └── stores/
+│       ├── entries.js
+│       └── ui.js
+├── routes/
+│   ├── +layout.svelte
+│   ├── +page.svelte
+│   └── entry/[date]/+page.svelte
+└── app.html
 ```
