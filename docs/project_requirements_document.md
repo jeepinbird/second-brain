@@ -27,7 +27,7 @@ To create a personal, web-based journaling application focused on capturing dail
 * **FR-JRN-06:** The Markdown editor must support standard Markdown syntax, including nested bullet points.
 * **FR-JRN-07:** Users must be able to define and assign tags and properties (key-value pairs) to entries via YAML frontmatter.
 * **FR-JRN-08:** The system must parse markdown bullet points as discrete "events" within each journal entry. For the purpose of this system, every top-level bullet point within the "## Notes" section or similar designated content area is considered a discrete event.
-* **FR-JRN-09:** Sub-bullets (nested bullets) under a parent bullet must be treated as supporting details for that event.
+* **FR-JRN-09:** Sub-bullets (nested bullets) under a parent bullet must be treated as supporting details for the parent event.
 * **FR-JRN-10:** When searching or querying, the system must be able to retrieve events (bullets) individually rather than entire daily entries.
 * **FR-JRN-11:** For semantic search and NLP queries, each event (with its supporting details) should be treated as a discrete unit of content for embedding and retrieval. Tags found within the text of an event bullet (e.g., #tagname) should be parsed and associated with the event in the database (`event_tag` table), in addition to any tags defined in the entry's YAML frontmatter.
 
@@ -388,9 +388,107 @@ erDiagram
     - Potential rollback of changes if needed
     - Recovery in case of application crash during write operations
 
-## 8. Appendix
+## 8. Implementation Challenges and Solutions
 
-### 8.1 Example Daily Entry (directly from Obsidian)
+### 8.1 Editor Experience Enhancement
+
+* **IMPL-EDITOR-01:** The system must implement a modern web-based Markdown editor using CodeMirror 6 with the following custom extensions:
+    - Wiki-style link autocompletion that queries the backend for potential link targets as the user types
+    - Markdown syntax highlighting with custom styling for wiki links, tags, and other special syntax
+    - YAML frontmatter handling with schema validation
+    - Support for keyboard shortcuts matching Obsidian's key bindings where possible
+
+* **IMPL-EDITOR-02:** The Markdown preview functionality must:
+    - Render wiki links (`[[link]]`) as proper clickable elements
+    - Support real-time preview updating as the user types
+    - Properly render embedded content references like images and file links
+    - Include custom renderers for specific Markdown extensions (callouts, admonitions)
+
+* **IMPL-EDITOR-03:** The system must implement a command palette similar to Obsidian's that allows users to:
+    - Search for and execute common commands
+    - Access editor functions without using the mouse
+    - See keyboard shortcuts for available commands
+    - Create custom commands via configuration (post-MVP feature)
+
+### 8.2 Real-time Updates Architecture
+
+* **IMPL-REALTIME-01:** The system must implement a websocket-based notification system that:
+    - Establishes persistent connections between frontend clients and the backend
+    - Pushes notifications about file changes to all connected clients
+    - Updates the UI in real-time when changes occur, whether made through the UI or directly to the files
+
+* **IMPL-REALTIME-02:** File system watching must be implemented using the `fsnotify` package with:
+    - Efficient event filtering to avoid unnecessary processing
+    - Debouncing mechanisms to handle rapid successive changes
+    - Graceful handling of temporary files created by text editors
+
+* **IMPL-REALTIME-03:** The system must implement an optimistic UI update strategy that:
+    - Updates the UI immediately when a user makes a change
+    - Confirms changes with the backend asynchronously
+    - Reconciles any conflicts if the file was changed externally
+
+* **IMPL-REALTIME-04:** A change queue system must be implemented to:
+    - Handle multiple rapid changes without database contention
+    - Prioritize user-initiated changes over background processing
+    - Ensure database consistency even with concurrent modifications
+
+### 8.3 Performance Optimization for Large Vaults
+
+* **IMPL-PERF-01:** The system must implement incremental indexing that:
+    - Only processes files that have changed since last indexed
+    - Uses file modification timestamps to detect changes
+    - Maintains a manifest of indexed files with their timestamps
+
+* **IMPL-PERF-02:** Background processing must be implemented with Go's concurrency primitives:
+    - Use goroutines for computationally intensive tasks like embedding generation
+    - Implement worker pools for parallel processing of multiple files
+    - Use channels for coordinating between file watchers, indexers, and the API server
+
+* **IMPL-PERF-03:** The system must implement a multi-level caching strategy:
+    - In-memory cache for frequently accessed file content and search results
+    - Disk-based cache for generated embeddings and other persistent computed data
+    - Cache invalidation mechanisms tied to the file change notification system
+
+* **IMPL-PERF-04:** DuckDB query optimization must include:
+    - Proper indexing on frequently queried columns (date, tags, file_path)
+    - For vector searches, implementation of approximate nearest neighbor algorithms
+    - Query plan monitoring and optimization for common query patterns
+
+* **IMPL-PERF-05:** All list views must implement pagination to:
+    - Limit the amount of data loaded at once
+    - Support infinite scrolling or paged navigation in the UI
+    - Pre-fetch adjacent pages to improve perceived performance
+
+### 8.4 RAG Implementation Architecture
+
+* **IMPL-RAG-01:** The system must implement a formal query planning pipeline that:
+    - Analyzes the input query to identify key elements (entities, time references, question type)
+    - Selects appropriate retrieval strategies based on the analysis
+    - Combines multiple retrieval methods when appropriate
+
+* **IMPL-RAG-02:** The system must implement a hybrid retrieval mechanism that:
+    - Executes keyword, tag, metadata, and vector searches as appropriate
+    - Blends results with configurable weights based on query characteristics
+    - Ranks final results based on relevance to the original query
+
+* **IMPL-RAG-03:** Context window management must be implemented with:
+    - Intelligent chunking that preserves semantic meaning
+    - Prioritization algorithms to include the most relevant information
+    - Dynamic context assembly based on the available LLM context window size
+
+* **IMPL-RAG-04:** Ollama integration must include:
+    - A robust client with retry mechanisms, timeouts, and error handling
+    - Background embedding generation to avoid blocking the UI
+    - Fallback mechanisms for when the LLM service is unavailable
+
+* **IMPL-RAG-05:** The system must include carefully designed prompt templates that:
+    - Provide clear instructions to the LLM about the expected response format
+    - Include relevant context from retrieved documents
+    - Guide the LLM to cite sources appropriately in responses
+
+## 9. Appendix
+
+### 9.1 Example Daily Entry (directly from Obsidian)
 ```markdown
 ---
 date: 2025-03-11
@@ -423,7 +521,7 @@ blurb: "Band parent meeting"
 - Finished watching [Zero Day](Shows/Zero-Day.md).
 ```
 
-### 8.2 Example Daily Template
+### 9.2 Example Daily Template
 ```markdown
 ---
 date: {{DATE}}
